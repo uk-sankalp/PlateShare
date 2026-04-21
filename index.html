@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Real-Time Map Locator</title>
+    
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Leaflet CSS & JS for Mapping -->
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+    
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+
+    <style>
+        /* Ensure the map takes the full viewport */
+        body, html { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden; }
+        #map { height: 100vh; width: 100vw; z-index: 1; }
+        
+        /* Floating UI elements need a higher z-index than the map */
+        .ui-overlay { z-index: 1000; }
+
+        /* Custom pulsing dot CSS to simulate real-time GPS marker */
+        .leaflet-div-icon.pulse-wrapper {
+            background: transparent;
+            border: none;
+        }
+        .pulse-dot {
+            display: block;
+            width: 16px;
+            height: 16px;
+            border-radius: 50%;
+            background: #2563eb;
+            border: 2px solid white;
+            box-shadow: 0 0 0 rgba(37, 99, 235, 0.4);
+            animation: pulse-animation 2s infinite;
+            transform: translate(-50%, -50%); /* Center the dot */
+        }
+        @keyframes pulse-animation {
+            0% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0.7); }
+            70% { box-shadow: 0 0 0 20px rgba(37, 99, 235, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(37, 99, 235, 0); }
+        }
+
+        /* Toast animation */
+        @keyframes slideIn {
+            from { transform: translateY(-100%); opacity: 0; }
+            to { transform: translateY(0); opacity: 1; }
+        }
+        .toast-enter { animation: slideIn 0.3s ease-out forwards; }
+    </style>
+</head>
+<body class="relative font-sans text-gray-800 bg-gray-100">
+
+    <!-- The Map Container -->
+    <div id="map"></div>
+
+    <!-- Floating UI Controls -->
+    <div class="ui-overlay absolute bottom-8 left-1/2 transform -translate-x-1/2 flex flex-col items-center gap-3 w-11/12 max-w-md">
+        
+        <!-- Info Card -->
+        <div class="bg-white/90 backdrop-blur-md shadow-lg rounded-2xl p-4 w-full flex items-center justify-between border border-gray-100">
+            <div>
+                <h1 class="font-bold text-gray-900 text-lg flex items-center gap-2">
+                    <i data-lucide="map-pin" class="w-5 h-5 text-blue-600"></i>
+                    Live Locator
+                </h1>
+                <p id="status-text" class="text-sm text-gray-500 mt-1">Ready to find your location</p>
+            </div>
+            
+            <!-- Live Tracking Toggle -->
+            <label class="flex items-center cursor-pointer">
+                <div class="relative">
+                    <input type="checkbox" id="tracking-toggle" class="sr-only">
+                    <div class="block bg-gray-300 w-10 h-6 rounded-full transition-colors duration-300 ease-in-out" id="toggle-bg"></div>
+                    <div class="dot absolute left-1 top-1 bg-white w-4 h-4 rounded-full transition-transform duration-300 ease-in-out" id="toggle-dot"></div>
+                </div>
+                <span class="ml-2 text-sm font-medium text-gray-700 hidden sm:block">Track</span>
+            </label>
+        </div>
+
+        <!-- Primary Action Button -->
+        <button id="locate-btn" class="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-full shadow-lg hover:shadow-xl transition-all duration-200 flex items-center gap-2 active:scale-95 w-full justify-center">
+            <i data-lucide="crosshair" class="w-5 h-5"></i>
+            Locate Me Now
+        </button>
+    </div>
+
+    <!-- Custom Toast Notification Container (Used instead of alert()) -->
+    <div id="toast-container" class="ui-overlay absolute top-5 left-1/2 transform -translate-x-1/2 hidden flex items-center p-4 mb-4 text-sm text-red-800 border border-red-300 rounded-lg bg-red-50 shadow-md">
+        <i data-lucide="alert-circle" class="flex-shrink-0 inline w-5 h-5 mr-3"></i>
+        <span class="sr-only">Info</span>
+        <div id="toast-message" class="font-medium">Message here</div>
+        <button type="button" onclick="hideToast()" class="ml-auto -mx-1.5 -my-1.5 bg-red-50 text-red-500 rounded-lg focus:ring-2 focus:ring-red-400 p-1.5 hover:bg-red-200 inline-flex items-center justify-center h-8 w-8">
+            <span class="sr-only">Close</span>
+            <i data-lucide="x" class="w-4 h-4"></i>
+        </button>
+    </div>
+
+    <script>
+        // Initialize Lucide Icons
+        lucide.createIcons();
+
+        // --- MAP INITIALIZATION ---
+        // Set default view to a world map (coordinates 20, 0 with zoom level 2)
+        const map = L.map('map', {
+            zoomControl: false // We hide default zoom to keep UI clean, can be added back if needed
+        }).setView([20.0, 0.0], 2);
+
+        // Add OpenStreetMap tiles
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+            maxZoom: 19,
+            attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+
+        // Add zoom control to top right
+        L.control.zoom({ position: 'topright' }).addTo(map);
+
+        // Variables to hold the marker and accuracy circle
+        let userMarker = null;
+        let accuracyCircle = null;
+        let watchId = null; // For continuous tracking
+
+        // --- DOM Elements ---
+        const locateBtn = document.getElementById('locate-btn');
+        const trackingToggle = document.getElementById('tracking-toggle');
+        const toggleBg = document.getElementById('toggle-bg');
+        const toggleDot = document.getElementById('toggle-dot');
+        const statusText = document.getElementById('status-text');
+        
+        // --- CUSTOM TOAST FUNCTION ---
+        function showToast(message) {
+            const toast = document.getElementById('toast-container');
+            const toastMsg = document.getElementById('toast-message');
+            toastMsg.textContent = message;
+            toast.classList.remove('hidden');
+            toast.classList.add('toast-enter');
+            
+            // Auto-hide after 5 seconds
+            setTimeout(hideToast, 5000);
+        }
+
+        function hideToast() {
+            const toast = document.getElementById('toast-container');
+            toast.classList.add('hidden');
+            toast.classList.remove('toast-enter');
+        }
+
+        // --- GEOLOCATION LOGIC ---
+
+        // Custom pulsing icon for the map marker
+        const pulsingIcon = L.divIcon({
+            className: 'pulse-wrapper',
+            html: '<div class="pulse-dot"></div>',
+            iconSize: [16, 16]
+        });
+
+        // Function to handle successful location retrieval
+        function updateLocationOnMap(position, shouldFlyTo = false) {
+            const lat = position.coords.latitude;
+            const lng = position.coords.longitude;
+            const accuracy = position.coords.accuracy;
+
+            // Remove existing marker/circle if they exist
+            if (userMarker) map.removeLayer(userMarker);
+            if (accuracyCircle) map.removeLayer(accuracyCircle);
+
+            // Add new pulsing marker
+            userMarker = L.marker([lat, lng], { icon: pulsingIcon }).addTo(map);
+            
+            // Add a circle representing the accuracy radius
+            accuracyCircle = L.circle([lat, lng], {
+                radius: accuracy,
+                color: '#3b82f6',
+                fillColor: '#3b82f6',
+                fillOpacity: 0.15,
+                weight: 1
+            }).addTo(map);
+
+            // Update UI text
+            statusText.textContent = `Accuracy: ±${Math.round(accuracy)} meters`;
+            statusText.classList.add('text-green-600');
+            statusText.classList.remove('text-gray-500');
+
+            // Move the camera to the user
+            if (shouldFlyTo) {
+                // FlyTo creates a smooth zooming/panning animation
+                map.flyTo([lat, lng], 16, {
+                    animate: true,
+                    duration: 1.5
+                });
+            }
+        }
+
+        // Function to handle geolocation errors
+        function handleLocationError(error) {
+            statusText.textContent = "Location access failed";
+            statusText.classList.remove('text-green-600');
+            statusText.classList.add('text-red-500');
+            
+            // Reset loading state on button
+            locateBtn.innerHTML = '<i data-lucide="crosshair" class="w-5 h-5"></i> Locate Me Now';
+            lucide.createIcons();
+            locateBtn.disabled = false;
+
+            // Handle specific error codes
+            switch(error.code) {
+                case error.PERMISSION_DENIED:
+                    showToast("Permission denied. Please allow location access in your browser settings.");
+                    // Turn off tracking toggle if it was on
+                    if(trackingToggle.checked) trackingToggle.click();
+                    break;
+                case error.POSITION_UNAVAILABLE:
+                    showToast("Location information is currently unavailable.");
+                    break;
+                case error.TIMEOUT:
+                    showToast("The request to get your location timed out.");
+                    break;
+                default:
+                    showToast("An unknown error occurred while fetching location.");
+                    break;
+            }
+        }
+
+        // Action: Single Location Fetch (Clicking the button)
+        locateBtn.addEventListener('click', () => {
+            if (!navigator.geolocation) {
+                showToast("Geolocation is not supported by your browser.");
+                return;
+            }
+
+            // Visual feedback on button
+            locateBtn.innerHTML = '<i data-lucide="loader-2" class="w-5 h-5 animate-spin"></i> Locating...';
+            lucide.createIcons();
+            locateBtn.disabled = true;
+            statusText.textContent = "Acquiring GPS signal...";
+            statusText.classList.remove('text-red-500', 'text-green-600');
+            statusText.classList.add('text-gray-500');
+
+            navigator.geolocation.getCurrentPosition(
+                (position) => {
+                    updateLocationOnMap(position, true);
+                    // Reset button state
+                    locateBtn.innerHTML = '<i data-lucide="crosshair" class="w-5 h-5"></i> Locate Me Now';
+                    lucide.createIcons();
+                    locateBtn.disabled = false;
+                },
+                handleLocationError,
+                {
+                    enableHighAccuracy: true, // Use GPS if available
+                    timeout: 10000,           // 10 seconds timeout
+                    maximumAge: 0             // Force fresh location
+                }
+            );
+        });
+
+        // Action: Continuous Live Tracking (Toggle switch)
+        trackingToggle.addEventListener('change', (e) => {
+            const isTracking = e.target.checked;
+
+            // Update Toggle UI
+            if (isTracking) {
+                toggleBg.classList.replace('bg-gray-300', 'bg-blue-500');
+                toggleDot.classList.add('translate-x-4');
+                statusText.textContent = "Starting live tracking...";
+                
+                if (!navigator.geolocation) {
+                    showToast("Geolocation is not supported by your browser.");
+                    trackingToggle.click(); // Revert toggle
+                    return;
+                }
+
+                // Start watching position
+                watchId = navigator.geolocation.watchPosition(
+                    (position) => {
+                        // Only fly to the location on the very first update of the watch sequence
+                        // to avoid fighting the user if they try to pan around while tracking
+                        const isFirstUpdate = !userMarker; 
+                        updateLocationOnMap(position, isFirstUpdate);
+                        statusText.textContent = "Live tracking active";
+                        statusText.classList.add('text-blue-600');
+                    },
+                    handleLocationError,
+                    {
+                        enableHighAccuracy: true,
+                        timeout: 10000,
+                        maximumAge: 0
+                    }
+                );
+            } else {
+                // Stop tracking
+                toggleBg.classList.replace('bg-blue-500', 'bg-gray-300');
+                toggleDot.classList.remove('translate-x-4');
+                statusText.textContent = "Live tracking stopped";
+                statusText.classList.remove('text-blue-600');
+                statusText.classList.add('text-gray-500');
+                
+                if (watchId !== null) {
+                    navigator.geolocation.clearWatch(watchId);
+                    watchId = null;
+                }
+            }
+        });
+
+    </script>
+</body>
+</html>

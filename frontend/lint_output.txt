@@ -1,0 +1,14 @@
+﻿
+> frontend@0.0.0 lint
+> eslint .
+
+
+C:\plateshare\frontend\src\components\Navbar.jsx
+  4:10  error  'useTheme' is defined but never used. Allowed unused vars must match /^[A-Z_]/u  no-unused-vars
+
+C:\plateshare\frontend\src\context\NotificationContext.jsx
+  26:12  error  'e' is defined but never used  no-unused-vars
+  33:12  error  'e' is defined but never used  no-unused-vars
+
+Γ£û 3 problems (3 errors, 0 warnings)
+

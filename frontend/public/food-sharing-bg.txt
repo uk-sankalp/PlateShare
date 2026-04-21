@@ -1,0 +1,3 @@
+// Place this image in the public directory for use as a background
+// File: frontend/public/food-sharing-bg.jpg
+// (You must manually upload the image to this path if not already present)
